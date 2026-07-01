@@ -1,4 +1,4 @@
-# Ilowa — TxODDS World Cup Hackathon (Prediction Markets & Settlement)
+# Ilowa TxODDS World Cup Hackathon (Prediction Markets & Settlement)
 
 Ilowa is a voice native SocialFi app for the Global South. For this track we built
 one thing and built it properly: prediction markets that settle themselves on

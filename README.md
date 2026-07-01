@@ -1,4 +1,4 @@
-# Ilowa — Prediction Markets & Settlement (TxODDS World Cup)
+# Ilowa Prediction Markets & Settlement (TxODDS World Cup)
 
 Prediction markets that settle themselves on Solana from TxLINE match data, with no
 admin and no oracle to trust. When a match ends, a keeper pulls the TxLINE Merkle
@@ -10,7 +10,7 @@ Settlement** track.
 
 ## Try it live
 
-- **App:** https://app.ilowa.app — open Markets, pick a World Cup market. You'll see
+- **App:** https://app.ilowa.app. Open Markets, pick a World Cup market. You'll see
   the Elder's read on the odds, a live two-sided order book (back Yes or No), and a
   "Settled by TxLINE proof" receipt that links to the real resolve transaction.
 - **API (devnet):** https://ilowa-api.fly.dev
@@ -77,11 +77,11 @@ program's surface.
 
 The API is a set of Next.js route handlers. It needs, at minimum:
 
-- `SOLANA_RPC_URL` — a devnet RPC
-- `TXODDS_API_TOKEN` — a TxLINE devnet data token (falls back to a small simulated
+- `SOLANA_RPC_URL`: a devnet RPC
+- `TXODDS_API_TOKEN`: a TxLINE devnet data token (falls back to a small simulated
   fixture set when absent, so it runs with no secret)
-- `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` — market and binding storage
-- `KEEPER_SECRET_KEY` — the wallet that pays for resolve transactions
+- `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`: market and binding storage
+- `KEEPER_SECRET_KEY`: the wallet that pays for resolve transactions
 
 The settlement keeper is one pass per call: `GET /api/cron/txline-resolver` finds
 armed market-to-fixture bindings whose match has finished, fetches the proof, and
