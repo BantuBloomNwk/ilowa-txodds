@@ -11,7 +11,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Connection } from '@solana/web3.js';
 import { matchResult } from '../../../../../lib/txodds/settlement';
 import { resolveOnChain, finalizeVault, keeperLoaded } from '../../../../../lib/txodds/resolver';
-import { evaluate, type MarketKind } from '../../../../../lib/txodds/predicate';
+import { evaluatePredicate } from '../../../../../lib/txodds/predicate';
 import { listBindings, claimBinding, markResolved } from '../../../../../lib/txodds/txMarkets';
 
 export const runtime = 'nodejs';
@@ -34,14 +34,14 @@ export async function POST(req: NextRequest) {
     const b = all.find((x) => x.status === 'armed') || all[0];
     if (b.status !== 'armed') return NextResponse.json({ ok: false, status: b.status, error: `binding is ${b.status}` }, { status: 409 });
 
-    const result = await matchResult(b.fixture_id);
+    const result = await matchResult(b.fixture_id, b.stat_key_a, b.stat_key_b);
     if (!result.finished || !result.proof) return NextResponse.json({ ok: false, pending: true, error: 'match not finished / not rooted yet' });
 
     if (!(await claimBinding(b.id, b.attempts))) return NextResponse.json({ ok: false, error: 'another settlement pass is in flight' }, { status: 409 });
 
     const conn = new Connection(readEnv('SOLANA_RPC_URL') || 'https://api.devnet.solana.com', 'confirmed');
     const sig = await resolveOnChain(conn, b, result);
-    const outcome = evaluate(b.kind as MarketKind, result.homeGoals ?? 0, result.awayGoals ?? 0);
+    const outcome = evaluatePredicate(b, result.statAValue ?? 0, result.statBValue);
     await markResolved(b.id, outcome, sig);
     let finalized = false;
     try { finalized = !!(await finalizeVault(conn, b.market_pubkey)); } catch { /* a later pass can finalize */ }

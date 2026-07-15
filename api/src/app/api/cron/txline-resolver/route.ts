@@ -11,7 +11,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Connection } from '@solana/web3.js';
 import { matchResult } from '../../../../lib/txodds/settlement';
 import { resolveOnChain, finalizeVault, keeperLoaded } from '../../../../lib/txodds/resolver';
-import { evaluate, type MarketKind } from '../../../../lib/txodds/predicate';
+import { evaluatePredicate } from '../../../../lib/txodds/predicate';
+import { recordSettlement } from '../../../../lib/txodds/clv';
 import {
   listBindings, claimBinding, markResolved, markBindingFailed, retryBinding,
   recoverStaleBindings, MAX_RESOLVE_ATTEMPTS,
@@ -25,7 +26,11 @@ const STALE_MS = 2 * 60 * 1000;
 
 export async function GET(req: NextRequest) {
   const secret = readEnv('CRON_SECRET');
-  if (secret && req.headers.get('authorization') !== `Bearer ${secret}`) {
+  // Fail closed: an unset secret must NOT open the resolver to the public internet.
+  if (!secret) {
+    return NextResponse.json({ error: 'CRON_SECRET not configured' }, { status: 503 });
+  }
+  if (req.headers.get('authorization') !== `Bearer ${secret}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   if (!keeperLoaded()) return NextResponse.json({ ok: false, error: 'keeper key not configured' }, { status: 500 });
@@ -39,16 +44,18 @@ export async function GET(req: NextRequest) {
 
     for (const b of armed) {
       let result;
-      try { result = await matchResult(b.fixture_id); } catch { continue; }
+      try { result = await matchResult(b.fixture_id, b.stat_key_a, b.stat_key_b); } catch { continue; }
       if (!result.finished || !result.proof) { summary.pendingMatch++; continue; }
       if (b.attempts >= MAX_RESOLVE_ATTEMPTS) { await markBindingFailed(b.id, 'max attempts'); summary.failed++; continue; }
       if (!(await claimBinding(b.id, b.attempts))) continue; // another pass took it
 
       try {
         const sig = await resolveOnChain(conn, b, result);
-        const outcome = evaluate(b.kind as MarketKind, result.homeGoals ?? 0, result.awayGoals ?? 0);
+        const outcome = evaluatePredicate(b, result.statAValue ?? 0, result.statBValue);
         await markResolved(b.id, outcome, sig);
         summary.resolved++;
+        // Provable-CLV: record the realized outcome against the Elder's pre-close commitment (best-effort).
+        recordSettlement(b.market_pubkey, outcome, sig).catch(() => { /* measure-only */ });
         // Complete settlement: finalize the vault so winnings are redeemable (best-effort).
         try { if (await finalizeVault(conn, b.market_pubkey)) summary.finalized++; } catch { /* keeper can finalize on a later pass */ }
       } catch (e: any) {

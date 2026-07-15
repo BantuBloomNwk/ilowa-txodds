@@ -109,10 +109,10 @@ export async function resolveOnChain(conn: Connection, binding: TxlineMarket, re
   const keeper = loadKeeper();
   const program = programFor(conn, keeper);
 
-  // Map the binding's stat keys to the fetched stat terms (1 = home, 2 = away).
-  const term = (k: number) => (k === 1 ? result.proof!.statHome : result.proof!.statAway);
-  const statA = term(binding.stat_key_a);
-  const statB = binding.stat_key_b != null ? term(binding.stat_key_b) : null;
+  // statA/statB are the proofs for the binding's keys, fetched in that order by matchResult
+  // (statA = stat_key_a, statB = stat_key_b). Works for any keys: goals, corners, cards.
+  const statA = result.proof.statA;
+  const statB = binding.stat_key_b != null ? result.proof.statB : null;
 
   const proof = {
     ts: new BN(result.proof.ts),

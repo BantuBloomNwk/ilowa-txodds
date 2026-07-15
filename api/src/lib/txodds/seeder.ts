@@ -9,6 +9,7 @@ import { shapeFixture } from './elder';
 import { buildPredicate, describeKind, type MarketKind } from './predicate';
 import { enableClobForFeed } from '../clob/enable';
 import { insertBinding, listBindings } from './txMarkets';
+import { commitForecast, CLV_KINDS } from './clv';
 
 const readEnv = (k: string) => process.env[k] || '';
 function sb() {
@@ -42,8 +43,17 @@ export async function seedOne(fx: Fixture, kind: MarketKind, arm = true) {
   if (!ins.ok) throw new Error(`feed insert failed: ${ins.status} ${(await ins.text()).slice(0, 160)}`);
   const scalarMarketId = (await ins.json())[0].id as string;
 
-  // 2) enable the order book on-chain
-  const mapping = await enableClobForFeed(scalarMarketId, question);
+  // 2) enable the order book on-chain (auto-seeds a small 2-sided book centered on the Elder's fair price)
+  const mapping = await enableClobForFeed(scalarMarketId, question, undefined, shaped?.impliedYes ?? undefined);
+
+  // 2b) Provable-CLV: commit the Elder's implied prob BEFORE close, anchored to a
+  // finalized slot. Best-effort — a failed commit must never break seeding.
+  if (CLV_KINDS.includes(kind)) {
+    commitForecast({
+      market_pubkey: mapping.market_pubkey, scalar_market_id: scalarMarketId,
+      fixture_id: fx.fixtureId, kind, p_implied: shaped?.impliedYes, close_time: fx.startTime,
+    }).catch(() => { /* commitment is measure-only; never blocks the trade path */ });
+  }
 
   // 3) bind to the fixture + predicate so the keeper resolves it.
   // arm=false leaves it tradeable but NOT resolving yet (bind later on cue).

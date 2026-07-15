@@ -1,4 +1,4 @@
-# Ilowa TxODDS World Cup Hackathon (Prediction Markets & Settlement)
+# Ilowa — TxODDS World Cup Hackathon (Prediction Markets & Settlement)
 
 Ilowa is a voice native SocialFi app for the Global South. For this track we built
 one thing and built it properly: prediction markets that settle themselves on
@@ -51,6 +51,25 @@ because a false claim simply won't verify.
   settles finished ones, and one fires set and forget stop or take profit orders.
 - The Elder's read is built on the demargined odds, so it is honest probability,
   not a guess.
+
+## The Elder's edge, made checkable
+
+There is a fair criticism of any prediction agent: it is cute until it beats the
+closing line. So we made that checkable instead of asserting it. Before a market
+closes, the Elder commits its implied probability on chain, anchored to a finalized
+slot so it cannot be backdated. After the match settles by TxLINE proof, we record
+the market's own closing line and the outcome. Anyone can then recompute the closing
+line value and the calibration, Brier and log loss, from public data. Running
+`scripts/verify-clv.mjs` reproduces the same numbers a stranger would, from the
+ledger alone, not from a dashboard we ask you to trust.
+
+An honest note, because a provable record that only shows wins is not provable.
+Today the Elder quotes the demargined line, so its edge is near zero by construction,
+and that is the correct result to show. The point of this phase is the verifiable
+record, not a fabricated edge. The same ledger surfaces real edge only if the Elder
+earns it, from in play latency on the TxLINE feed or from softer markets, and it will
+show the losses too. Public ledger: `GET /api/txodds/clv/ledger`. Design:
+`docs/specs/provable-clv-elder.md`.
 
 ## TxLINE endpoints we used
 

@@ -9,6 +9,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { worldCupFixtures } from '../../../../../lib/txodds/feed';
 import { shapeFixture } from '../../../../../lib/txodds/elder';
+import { shapeForUser, type RiskProfile } from '../../../../../lib/txodds/elder-risk';
+import { localizeMarkets } from '../../../../../lib/txodds/elder-localize';
+
+// "in their language": route the Elder's prose through Ilowa's translation layer. Env-gated like
+// the app's other AI (Aya / Lelapa); ELDER_TRANSLATE_URL is a service that maps
+// { texts, targetLang } -> { translations }. Absent or failing -> English (the % still verifies).
+const TRANSLATE_URL = process.env.ELDER_TRANSLATE_URL;
+const translate = TRANSLATE_URL
+  ? async (texts: string[], targetLang: string): Promise<string[]> => {
+      const r = await fetch(TRANSLATE_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ texts, targetLang }) });
+      if (!r.ok) throw new Error('translate ' + r.status);
+      return (await r.json()).translations as string[];
+    }
+  : undefined;
+
+const RISKS: RiskProfile[] = ['careful', 'balanced', 'bold'];
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -18,7 +34,13 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   try {
-    const limit = Math.min(Number(req.nextUrl.searchParams.get('limit')) || 6, 12);
+    const sp = req.nextUrl.searchParams;
+    const limit = Math.min(Number(sp.get('limit')) || 6, 12);
+    // her context: risk profile + per-idea budget + language (all optional)
+    const risk: RiskProfile = RISKS.includes(sp.get('risk') as RiskProfile) ? (sp.get('risk') as RiskProfile) : 'balanced';
+    const stakeUsdc = Math.max(0, Math.min(Number(sp.get('stake')) || 10, 10000));
+    const lang = (sp.get('lang') || 'en').toLowerCase();
+
     const { live, fixtures } = await worldCupFixtures();
     const now = Date.now();
     const upcoming = fixtures
@@ -26,15 +48,23 @@ export async function GET(req: NextRequest) {
       .sort((a, b) => a.startTime - b.startTime)
       .slice(0, limit);
 
-    const shaped = await Promise.all(upcoming.map(async (f) => ({
-      fixtureId: f.fixtureId,
-      home: f.home,
-      away: f.away,
-      startTime: f.startTime,
-      markets: await shapeFixture(f.fixtureId, f.home, f.away),
-    })));
+    const shaped = await Promise.all(upcoming.map(async (f) => {
+      const base = await shapeFixture(f.fixtureId, f.home, f.away);   // reads the market (with provenance)
+      const forYou = shapeForUser(base, { risk, stakeUsdc });          // shapes to her risk profile
+      return {
+        fixtureId: f.fixtureId,
+        home: f.home,
+        away: f.away,
+        startTime: f.startTime,
+        markets: await localizeMarkets(base, lang, translate),         // presented in her language
+        shapedForYou: await localizeMarkets(forYou, lang, translate),
+      };
+    }));
 
-    return NextResponse.json({ live, count: shaped.length, fixtures: shaped }, { headers: { 'cache-control': 'public, max-age=120' } });
+    return NextResponse.json(
+      { live, count: shaped.length, profile: { risk, stakeUsdc, lang }, fixtures: shaped },
+      { headers: { 'cache-control': 'private, max-age=60' } },
+    );
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || 'elder shaping failed' }, { status: 500 });
   }

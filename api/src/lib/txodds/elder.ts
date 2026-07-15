@@ -15,7 +15,12 @@ export interface ShapedMarket {
   question: string;
   impliedYes: number | null; // 0..1 implied probability of YES, from live odds
   analysis: string;          // the Elder's one-line read
+  // provenance: where the number came from, so the read is checkable, not just trusted.
+  source: { book: string; impliedPct: number | null; fetchedAt: string; fixtureId: number } | null;
 }
+
+// the demargined bookmaker whose vig-removed % the Elder quotes (so the number is honest)
+export const ELDER_BOOK = 'TXLineStablePriceDemargined';
 
 interface Probs { home?: number; draw?: number; away?: number; over15?: number; over25?: number; over35?: number; }
 
@@ -69,8 +74,12 @@ function analysis(kind: MarketKind, home: string, away: string, prob: number | n
 /** Shape the headline markets for one fixture from its live odds. */
 export async function shapeFixture(fixtureId: number, home: string, away: string): Promise<ShapedMarket[]> {
   let probs: Probs = {};
+  const fetchedAt = new Date().toISOString();
   try { const r = await txGet(`/api/odds/snapshot/${fixtureId}`); if (r.ok) probs = parseOdds(await r.json()); } catch { /* odds may be absent pre-match */ }
-  const mk = (kind: MarketKind, question: string, prob: number | null): ShapedMarket => ({ kind, question, impliedYes: prob ?? null, analysis: analysis(kind, home, away, prob ?? null) });
+  const mk = (kind: MarketKind, question: string, prob: number | null): ShapedMarket => ({
+    kind, question, impliedYes: prob ?? null, analysis: analysis(kind, home, away, prob ?? null),
+    source: prob == null ? null : { book: ELDER_BOOK, impliedPct: Math.round(prob * 1000) / 10, fetchedAt, fixtureId },
+  });
   return [
     mk('home_win', `Will ${home} beat ${away}?`, probs.home ?? null),
     mk('away_win', `Will ${away} beat ${home}?`, probs.away ?? null),
