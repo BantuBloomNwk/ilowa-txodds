@@ -8,9 +8,11 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { worldCupFixtures } from '../../../../../lib/txodds/feed';
-import { shapeFixture } from '../../../../../lib/txodds/elder';
+import { shapeFixture, type ShapedMarket } from '../../../../../lib/txodds/elder';
+import { shapeIndependentMarkets } from '../../../../../lib/txodds/independent-model';
 import { shapeForUser, type RiskProfile } from '../../../../../lib/txodds/elder-risk';
 import { localizeMarkets } from '../../../../../lib/txodds/elder-localize';
+import { describeKind } from '../../../../../lib/txodds/predicate';
 
 // "in their language": route the Elder's prose through Ilowa's translation layer. Env-gated like
 // the app's other AI (Aya / Lelapa); ELDER_TRANSLATE_URL is a service that maps
@@ -49,7 +51,21 @@ export async function GET(req: NextRequest) {
       .slice(0, limit);
 
     const shaped = await Promise.all(upcoming.map(async (f) => {
-      const base = await shapeFixture(f.fixtureId, f.home, f.away);   // reads the market (with provenance)
+      const echo = await shapeFixture(f.fixtureId, f.home, f.away);   // reads the market (with provenance)
+      // Corners/cards aren't in TxLINE's odds feed at all, so they never come from shapeFixture.
+      // Fold in the independent historical model here too, not just at seed time, so the picks
+      // surface (and its "not a market echo" provenance line) actually has something to show.
+      const model = await shapeIndependentMarkets(f.home, f.away).catch(() => []);
+      const modelShaped: ShapedMarket[] = model
+        .filter((m) => m.kind === 'corners_over_8_5' || m.kind === 'yellows_over_3_5')
+        .map((m) => ({
+          kind: m.kind,
+          question: `${describeKind(m.kind, f.home, f.away)}?`,
+          impliedYes: m.impliedYes,
+          analysis: m.analysis,
+          source: { book: 'elder-independent-model-v1', impliedPct: Math.round(m.impliedYes * 1000) / 10, fetchedAt: new Date().toISOString(), fixtureId: f.fixtureId },
+        }));
+      const base = [...echo, ...modelShaped];
       const forYou = shapeForUser(base, { risk, stakeUsdc });          // shapes to her risk profile
       return {
         fixtureId: f.fixtureId,
