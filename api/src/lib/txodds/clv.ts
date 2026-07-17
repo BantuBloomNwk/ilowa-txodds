@@ -23,9 +23,18 @@ import type { MarketKind } from './predicate';
 // real signal, and the ledger will show exactly that, honestly.
 export const ELDER_VERSION = 'elder-odds-v1';
 
-// Only these kinds carry a real implied line today (elder.ts parses 1X2 + goals).
-// Corners/cards have no odds parse yet, so they get no CLV commitment (honest).
-export const CLV_KINDS: MarketKind[] = ['home_win', 'away_win', 'over_2_5'];
+// Kinds that get a pre-close commitment. home_win/away_win/over_2_5 use the odds-echo shaper
+// (elder.ts) and also get a close-line snapshot below, since TxLINE quotes those markets.
+// That's a genuine two-sided comparison once the shaper's signal improves beyond v1's echo.
+// corners_over_8_5/yellows_over_3_5 use the INDEPENDENT historical-frequency model
+// (independent-model.ts) instead. TxLINE doesn't quote a corners/cards odds market, so
+// snapshotCloseLines (which only reads elder.shapeFixture) will never find a close price for
+// these kinds, so close_line stays null forever, by design. That's honest, not broken: the
+// ledger UI already renders a settled outcome with no CLV points chip when close_line is null
+// (see ClvTrackRecord.tsx's status logic), rather than fabricating a close line that doesn't
+// exist. corners_over_10_5 is seeded (see seeder.ts MODEL_KINDS) but left out of CLV tracking
+// to keep the tracked set to one corners threshold.
+export const CLV_KINDS: MarketKind[] = ['home_win', 'away_win', 'over_2_5', 'corners_over_8_5', 'yellows_over_3_5'];
 
 const readEnv = (k: string) => process.env[k] || '';
 function sb() {

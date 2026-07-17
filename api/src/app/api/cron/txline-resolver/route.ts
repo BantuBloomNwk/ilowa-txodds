@@ -15,7 +15,7 @@ import { evaluatePredicate } from '../../../../lib/txodds/predicate';
 import { recordSettlement } from '../../../../lib/txodds/clv';
 import {
   listBindings, claimBinding, markResolved, markBindingFailed, retryBinding,
-  recoverStaleBindings, MAX_RESOLVE_ATTEMPTS,
+  recoverStaleBindings, recoverFailedBindings, MAX_RESOLVE_ATTEMPTS,
 } from '../../../../lib/txodds/txMarkets';
 
 export const runtime = 'nodejs';
@@ -23,6 +23,10 @@ export const maxDuration = 60;
 
 const readEnv = (k: string) => process.env[k] || '';
 const STALE_MS = 2 * 60 * 1000;
+// A 'failed' binding gets one fresh attempts budget per cooldown window. See
+// recoverFailedBindings's header comment for why this failure mode is worth retrying
+// rather than treating 5 failures as permanent.
+const FAILED_COOLDOWN_MS = 60 * 60 * 1000;
 
 export async function GET(req: NextRequest) {
   const secret = readEnv('CRON_SECRET');
@@ -39,6 +43,7 @@ export async function GET(req: NextRequest) {
   const summary = { checked: 0, resolved: 0, finalized: 0, pendingMatch: 0, failed: 0, retried: 0 };
   try {
     await recoverStaleBindings(new Date(Date.now() - STALE_MS).toISOString());
+    await recoverFailedBindings(new Date(Date.now() - FAILED_COOLDOWN_MS).toISOString());
     const armed = await listBindings({ status: 'armed' });
     summary.checked = armed.length;
 

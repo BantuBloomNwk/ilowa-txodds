@@ -18,7 +18,11 @@ const readEnv = (k: string) => process.env[k] || '';
 // Tunable via env without a redeploy.
 const LIMIT = Number(readEnv('SEEDER_FIXTURE_LIMIT')) || 5;        // look ahead this many fixtures
 const MAX_PER_PASS = Number(readEnv('SEEDER_MAX_PER_PASS')) || 2;   // create at most this many new markets per pass
-const KINDS = (readEnv('SEEDER_KINDS') || 'home_win').split(',').map((k) => k.trim()).filter(Boolean) as MarketKind[];
+// Default covers goals (odds-echo) + corners/yellows (independent model, see
+// independent-model.ts) + red_card (settleable, no Elder-quoted probability yet, same honest
+// gap as before).
+// Override via SEEDER_KINDS env without a redeploy if you want to narrow this back down.
+const KINDS = (readEnv('SEEDER_KINDS') || 'home_win,away_win,over_2_5,corners_over_8_5,yellows_over_3_5,red_card').split(',').map((k) => k.trim()).filter(Boolean) as MarketKind[];
 
 export async function GET(req: NextRequest) {
   const secret = readEnv('CRON_SECRET');

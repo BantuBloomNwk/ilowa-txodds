@@ -5,11 +5,18 @@
  * manual /elder/seed endpoint and the scheduled /cron/txline-seeder.
  */
 import { worldCupFixtures, type Fixture } from './feed';
-import { shapeFixture } from './elder';
+import { shapeFixture, type ShapedMarket } from './elder';
+import { shapeIndependentMarkets } from './independent-model';
 import { buildPredicate, describeKind, type MarketKind } from './predicate';
 import { enableClobForFeed } from '../clob/enable';
 import { insertBinding, listBindings } from './txMarkets';
 import { commitForecast, CLV_KINDS } from './clv';
+
+// Kinds TxLINE's own odds feed doesn't quote (elder.ts parseOdds only reads 1X2 + O/U goals),
+// so these are shaped from independent-model.ts's historical frequency model instead of an
+// odds echo. See independent-model.ts header for why this is a genuine second source, not a
+// re-read of the same feed.
+const MODEL_KINDS: MarketKind[] = ['corners_over_8_5', 'corners_over_10_5', 'yellows_over_3_5'];
 
 const readEnv = (k: string) => process.env[k] || '';
 function sb() {
@@ -26,7 +33,17 @@ export async function seedOne(fx: Fixture, kind: MarketKind, arm = true) {
   if (!pred) throw new Error(`unknown kind ${kind}`);
   if (arm && await alreadySeeded(fx.fixtureId, kind)) return { skipped: true, reason: 'already seeded' };
 
-  const shaped = (await shapeFixture(fx.fixtureId, fx.home, fx.away)).find((m) => m.kind === kind);
+  let shaped: ShapedMarket | undefined = (await shapeFixture(fx.fixtureId, fx.home, fx.away)).find((m) => m.kind === kind);
+  if (!shaped && MODEL_KINDS.includes(kind)) {
+    const model = (await shapeIndependentMarkets(fx.home, fx.away)).find((m) => m.kind === kind);
+    if (model) {
+      shaped = {
+        kind, question: `${describeKind(kind, fx.home, fx.away)}?`, impliedYes: model.impliedYes,
+        analysis: model.analysis,
+        source: { book: 'elder-independent-model-v1', impliedPct: Math.round(model.impliedYes * 1000) / 10, fetchedAt: new Date().toISOString(), fixtureId: fx.fixtureId },
+      };
+    }
+  }
   const question = shaped?.question || `${describeKind(kind, fx.home, fx.away)}?`;
 
   // 1) feed row (binary, TxLINE-settled) with the Elder's odds-shaped forecast

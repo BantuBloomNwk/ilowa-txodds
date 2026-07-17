@@ -73,6 +73,24 @@ export async function recoverStaleBindings(cutoffIso: string) {
   });
 }
 
+// Give up-for-now 'failed' bindings a fresh attempts budget after a cooldown. Confirmed
+// empirically (fixture 18241006, 2026-07) that a TimestampMismatch failure, which reads like
+// TxLINE's own snapshot/Merkle-root generation lagging slightly behind game_finalised, clears
+// on its own given enough elapsed time. A manual retry days later succeeded on its first
+// attempt. Without this, exhausting MAX_RESOLVE_ATTEMPTS during that lag window (plausible
+// right after a match ends, when the resolver races TxLINE's own backend) permanently strands
+// the binding, since nothing else in this file ever revisits 'failed' rows. Terminal errors
+// (MarketNotActive/already-resolved) never reach 'failed' via this path since resolveOnChain
+// won't re-run against an already-settled market without erroring the same way again, so a
+// cooldown retry costs at most a wasted keeper-fee attempt, not a wrong settlement.
+export async function recoverFailedBindings(cutoffIso: string) {
+  const s = sb();
+  await fetch(`${s.url}/rest/v1/txline_markets?status=eq.failed&updated_at=lt.${cutoffIso}`, {
+    method: 'PATCH', headers: { ...s.headers, Prefer: 'return=minimal' },
+    body: JSON.stringify({ status: 'armed', attempts: 0, last_error: null }), cache: 'no-store',
+  });
+}
+
 export async function listBindings(filter: { scalarMarketId?: string; status?: string; fixtureId?: number; marketPubkey?: string } = {}): Promise<TxlineMarket[]> {
   const s = sb();
   const q: string[] = [];
