@@ -3,11 +3,68 @@
 // reimplemented HERE (not the server's module), then checks it matches what the
 // endpoint reported. This is the whole claim: the edge is checkable, not marketed.
 //
-//   node scripts/verify-clv.mjs [--base https://ilowa-api.fly.dev] [--elder elder-odds-v1]
+//   node scripts/verify-clv.mjs [--base https://ilowa-api.fly.dev] [--elder elder-odds-v1] [--no-chain]
+//
+// The recompute above proves the math is right given the rows the API returned — but that API
+// is ours, so on its own this only proves we didn't make an arithmetic mistake, not that the
+// commitments themselves are real and predate close. Phase 2 closes that gap: the commitment
+// (elder_version, kind, p_implied, committed_slot) now also lives on-chain, init-only, at a PDA
+// anyone can derive from public fields alone. This script re-derives that PDA per row, reads it
+// directly from devnet, and checks it matches what the database claims. Pass --no-chain to skip
+// this and fall back to the phase-1-only recompute (e.g. if you have no RPC access handy).
+import { PublicKey, Connection } from '@solana/web3.js';
+import { createHash } from 'crypto';
+
 const args = process.argv.slice(2);
 const arg = (f, d) => { const i = args.indexOf(f); return i >= 0 ? args[i + 1] : d; };
 const BASE = arg('--base', process.env.CLV_BASE || 'https://ilowa-api.fly.dev');
 const ELDER = arg('--elder', '');
+const CHECK_CHAIN = !args.includes('--no-chain');
+const ILOWA_PROGRAM = new PublicKey('HYDwFwax9U6svCRYWD7Fqq3TXxSSQCQ6CwKrb3ZTkD3z');
+const RPC = process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com';
+
+function clvCommitmentPda(marketPubkey, elderVersion, kind) {
+  const elderVersionHash = createHash('sha256').update(elderVersion).digest();
+  const kindHash = createHash('sha256').update(kind).digest();
+  const [pda] = PublicKey.findProgramAddressSync(
+    [Buffer.from('clv_commit'), new PublicKey(marketPubkey).toBuffer(), elderVersionHash, kindHash],
+    ILOWA_PROGRAM,
+  );
+  return pda;
+}
+
+/** Decode the ClvCommitment account layout (see programs/ilowa/src/state/clv_commitment.rs). */
+function decodeCommitment(data) {
+  let o = 8; // anchor discriminator
+  o += 32; // market
+  o += 32; // elder_version_hash
+  o += 32; // kind_hash
+  const pImpliedBps = data.readUInt16LE(o); o += 2;
+  const committedSlot = data.readBigUInt64LE(o); o += 8;
+  return { pImpliedBps, committedSlot };
+}
+
+async function checkOnChain(rows) {
+  const conn = new Connection(RPC, 'confirmed');
+  let onChainOk = 0, onChainMissing = 0, onChainMismatch = 0;
+  for (const r of rows) {
+    const pda = clvCommitmentPda(r.market_pubkey, r.elder_version, r.kind);
+    const info = await conn.getAccountInfo(pda).catch(() => null);
+    if (!info) { onChainMissing++; continue; }
+    const onchain = decodeCommitment(info.data);
+    const dbBps = Math.round(Number(r.p_implied) * 10_000);
+    const dbSlot = r.committed_slot != null ? BigInt(r.committed_slot) : null;
+    const bpsMatch = onchain.pImpliedBps === dbBps;
+    const slotMatch = dbSlot == null || onchain.committedSlot === dbSlot;
+    if (bpsMatch && slotMatch) onChainOk++;
+    else {
+      onChainMismatch++;
+      console.log(`         \x1b[31mON-CHAIN MISMATCH\x1b[0m ${r.market_pubkey.slice(0, 8)}… db p=${dbBps}bps slot=${dbSlot} vs chain p=${onchain.pImpliedBps}bps slot=${onchain.committedSlot}`);
+    }
+  }
+  console.log(`  on-chain cross-check: ${onChainOk} match, ${onChainMissing} not yet on-chain (phase-1 only), ${onChainMismatch} mismatch\n`);
+  return onChainMismatch;
+}
 
 // --- metric math, reimplemented independently of the server ---------------------
 const clamp01 = (x) => Math.min(1 - 1e-9, Math.max(1e-9, x));
@@ -53,6 +110,14 @@ if (!rows.length) {
 }
 
 let fail = 0;
+
+if (CHECK_CHAIN) {
+  console.log(`  cross-checking against devnet (${RPC})…`);
+  fail += await checkOnChain(rows);
+} else {
+  console.log('  --no-chain: skipping the on-chain cross-check, this run only proves the math.\n');
+}
+
 // group rows by elder_version and reconcile with the server's per-version records
 const byV = new Map();
 for (const r of rows) { if (!byV.has(r.elder_version)) byV.set(r.elder_version, []); byV.get(r.elder_version).push(r); }

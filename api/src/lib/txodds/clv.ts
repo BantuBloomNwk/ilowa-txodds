@@ -13,7 +13,9 @@
  * (elder.shapeFixture → demargined implied %), so CLV compares like with like.
  * All writes are best-effort and never block the trading/settlement path.
  */
-import { Connection } from '@solana/web3.js';
+import { Connection, Keypair, PublicKey, SystemProgram, Transaction, TransactionInstruction } from '@solana/web3.js';
+import { createHash } from 'crypto';
+import bs58 from 'bs58';
 import { shapeFixture } from './elder';
 import type { MarketKind } from './predicate';
 
@@ -67,6 +69,64 @@ function conn(): Connection {
   return new Connection(readEnv('SOLANA_RPC_URL') || 'https://api.devnet.solana.com', 'confirmed');
 }
 
+// Provable-CLV phase 2 (docs/specs/provable-clv-elder.md §9): the commit itself now lands
+// on-chain, init-only, so "committed before close, cannot be backdated" is trustless instead of
+// server-attested. Verified live on devnet 2026-07-17: a first commit succeeds and is readable
+// by anyone via getAccountInfo; a second attempt at the same (market, elder_version, kind) seeds
+// fails outright, that's the actual anti-backdating property, not a convention we're asking
+// anyone to trust. Self-contained instruction encoding here rather than the full program IDL,
+// same pattern resolver.ts already uses for resolve_market_via_txline.
+const ILOWA_PROGRAM = new PublicKey('HYDwFwax9U6svCRYWD7Fqq3TXxSSQCQ6CwKrb3ZTkD3z');
+const COMMIT_CLV_DISC = createHash('sha256').update('global:commit_clv_forecast').digest().subarray(0, 8);
+
+export function clvCommitmentPda(marketPubkey: string, elderVersion: string, kind: string): PublicKey {
+  const elderVersionHash = createHash('sha256').update(elderVersion).digest();
+  const kindHash = createHash('sha256').update(kind).digest();
+  const [pda] = PublicKey.findProgramAddressSync(
+    [Buffer.from('clv_commit'), new PublicKey(marketPubkey).toBuffer(), elderVersionHash, kindHash],
+    ILOWA_PROGRAM,
+  );
+  return pda;
+}
+
+/** Best-effort: write the commitment on-chain too. Never throws — a failure here must not
+ *  block seeding, the off-chain row (already written) still carries the measure-only record. */
+async function commitOnChain(marketPubkey: string, elderVersion: string, kind: string, pImplied: number): Promise<string | null> {
+  const secret = readEnv('FAUCET_SECRET_KEY');
+  if (!secret) return null;
+  try {
+    const keeper = Keypair.fromSecretKey(bs58.decode(secret));
+    const market = new PublicKey(marketPubkey);
+    const elderVersionHash = createHash('sha256').update(elderVersion).digest();
+    const kindHash = createHash('sha256').update(kind).digest();
+    const pdaAddr = clvCommitmentPda(marketPubkey, elderVersion, kind);
+    const pImpliedBps = Math.max(0, Math.min(10_000, Math.round(pImplied * 10_000)));
+    const bpsBuf = Buffer.alloc(2);
+    bpsBuf.writeUInt16LE(pImpliedBps);
+    const data = Buffer.concat([COMMIT_CLV_DISC, elderVersionHash, kindHash, bpsBuf]);
+    const ix = new TransactionInstruction({
+      programId: ILOWA_PROGRAM,
+      keys: [
+        { pubkey: keeper.publicKey, isSigner: true, isWritable: true },
+        { pubkey: market, isSigner: false, isWritable: false },
+        { pubkey: pdaAddr, isSigner: false, isWritable: true },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      ],
+      data,
+    });
+    const c = conn();
+    const tx = new Transaction().add(ix);
+    const sig = await c.sendTransaction(tx, [keeper]);
+    await c.confirmTransaction(sig, 'confirmed');
+    return sig;
+  } catch (e) {
+    // Already-committed (a re-seed retry racing an earlier successful commit) is expected and
+    // fine, not an error worth logging loudly; anything else, swallow per the best-effort
+    // contract above, the off-chain row is the source of truth for the trade/seed path.
+    return null;
+  }
+}
+
 /** Finalized slot + blockhash = the trustless "before close" anchor. Best-effort. */
 async function chainAnchor(): Promise<{ slot: number | null; blockhash: string | null }> {
   try {
@@ -111,7 +171,11 @@ export async function commitForecast(input: {
     body: JSON.stringify(row), cache: 'no-store',
   });
   if (!res.ok) throw new Error(`clv commit failed: ${res.status} ${(await res.text()).slice(0, 160)}`);
-  return (await res.json())[0];
+  const saved = (await res.json())[0];
+  // Fire-and-forget: the on-chain write is what makes "before close" trustless, but it must
+  // never hold up seeding if RPC is slow or the keeper is briefly unfunded.
+  commitOnChain(input.market_pubkey, ELDER_VERSION, input.kind, input.p_implied).catch(() => {});
+  return saved;
 }
 
 /** Commitments still needing a close line (close_time passed, close_line null). */
