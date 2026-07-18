@@ -104,11 +104,20 @@ export async function matchResult(fixtureId: number, statKeyA = 1, statKeyB: num
   const winner = isGoals && awayGoals != null
     ? (statAValue > awayGoals ? 'home' : awayGoals > statAValue ? 'away' : 'draw') : null;
 
+  // Root cause of the earlier TimestampMismatch failures (fixture 18241006, 2026-07):
+  // epochDay/the daily_scores_roots PDA seed and the proof's `ts` field must come from
+  // summary.updateStats.minTimestamp, NOT the response's top-level `ts`. Confirmed against
+  // TxLINE's own devnet example (subscription_scores_v3c.ts): `targetTs =
+  // valV2.summary.updateStats.minTimestamp`, used for both the PDA seed and the instruction's
+  // `ts` payload. Using the wrong field mostly happens to agree with the right one (both are
+  // "roughly when the match finished"), which is exactly why this passed on most fixtures and
+  // only failed on ones landing close to a UTC day boundary, where the two diverge by a day.
+  const targetTs = v.summary?.updateStats?.minTimestamp ?? v.ts;
   return {
     fixtureId, finished: true, homeGoals, awayGoals, winner, statAValue, statBValue,
-    ts: v.ts, epochDay: Math.floor(v.ts / 86400000), seq,
+    ts: targetTs, epochDay: Math.floor(targetTs / 86400000), seq,
     proof: {
-      ts: v.ts,
+      ts: targetTs,
       summary: {
         fixtureId: v.summary.fixtureId,
         updateStats: v.summary.updateStats,
