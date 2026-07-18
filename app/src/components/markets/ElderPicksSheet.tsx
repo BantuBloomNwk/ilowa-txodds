@@ -28,7 +28,7 @@ const RISKS: { key: RiskProfile; label: string }[] = [
   { key: 'bold', label: 'Bold' },
 ];
 
-export interface PickCard { fixtureId: number; home: string; away: string; pick: ElderPick }
+export interface PickCard { fixtureId: number; home: string; away: string; startTime: number; pick: ElderPick }
 
 /** Shared state for the button badge + the sheet: fetches the shaped picks, re-fetches on risk. */
 export function useElderPicks(lang = 'en', stakeUsdc = 10) {
@@ -40,7 +40,7 @@ export function useElderPicks(lang = 'en', stakeUsdc = 10) {
     setLoading(true);
     const res = await fetchElderPicks({ risk: r, stake: stakeUsdc, lang, limit: 6 });
     const cards: PickCard[] = (res?.fixtures ?? [])
-      .map((f) => ({ fixtureId: f.fixtureId, home: f.home, away: f.away, pick: f.shapedForYou?.[0] }))
+      .map((f) => ({ fixtureId: f.fixtureId, home: f.home, away: f.away, startTime: f.startTime, pick: f.shapedForYou?.[0] }))
       .filter((c): c is PickCard => !!c.pick);
     setFixtures(cards);
     setLoading(false);
@@ -87,7 +87,8 @@ function OddsBar({ p, accent }: { p: number; accent: string }) {
 }
 
 const TradingCard = memo(function TradingCard(
-  { card, accent, onTrade }: { card: PickCard; accent: string; onTrade?: (fixtureId: number, kind: string) => void },
+  { card, accent, onTrade, onVerify }:
+  { card: PickCard; accent: string; onTrade?: (fixtureId: number, kind: string) => void; onVerify?: () => void },
 ) {
   const { pick } = card;
   const pctNum = pick.impliedYes != null ? Math.round(pick.impliedYes * 100) : null;
@@ -113,14 +114,15 @@ const TradingCard = memo(function TradingCard(
         </Pressable>
       </View>
       {pick.source && (
-        <View style={styles.prov}>
+        <Pressable style={styles.prov} onPress={onVerify} hitSlop={6} disabled={!onVerify}>
           <ShieldCheck size={12} color={STATE.info.text} />
           <Text style={styles.provText} numberOfLines={1}>
             {pick.source.book === 'elder-independent-model-v1'
               ? `${pctNum != null ? `${pctNum}% ` : ''}from the Elder's own model, fit on match history, not a market echo. Tap to verify.`
               : `${pctNum != null ? `${pctNum}% ` : ''}from the live ${pick.source.book} book. Tap to verify.`}
           </Text>
-        </View>
+          {onVerify && <ArrowUpRight size={11} color={STATE.info.text} />}
+        </Pressable>
       )}
     </Animated.View>
   );
@@ -128,9 +130,9 @@ const TradingCard = memo(function TradingCard(
 
 // ---------- sheet ----------
 export function ElderPicksSheet(
-  { visible, onClose, elder, accent, region, state, onTrade }:
+  { visible, onClose, elder, accent, region, state, onTrade, onVerify }:
   { visible: boolean; onClose: () => void; elder: any; accent: string; region: any;
-    state: ReturnType<typeof useElderPicks>; onTrade?: (fixtureId: number, kind: string) => void },
+    state: ReturnType<typeof useElderPicks>; onTrade?: (fixtureId: number, kind: string) => void; onVerify?: () => void },
 ) {
   const { risk, setRisk, cards, loading, hasLoaded } = state;
   const elderName = elder?.name || 'The Elder';
@@ -176,7 +178,7 @@ export function ElderPicksSheet(
           </View>
         ) : (
           <ScrollView style={{ maxHeight: 460 }} showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: SP[3], paddingBottom: SP[2] }}>
-            {cards.map((c) => <TradingCard key={`${c.fixtureId}-${c.pick.kind}`} card={c} accent={accent} onTrade={onTrade} />)}
+            {cards.map((c) => <TradingCard key={`${c.fixtureId}-${c.pick.kind}`} card={c} accent={accent} onTrade={onTrade} onVerify={onVerify} />)}
           </ScrollView>
         )}
 
