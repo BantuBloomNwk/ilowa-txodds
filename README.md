@@ -95,6 +95,20 @@ result for a fixture, the app falls back to simulated data for the walkthrough, 
 the contest allows. The settlement path itself is real and on-chain, as the
 transaction above shows.
 
+## What's next
+
+The order book above is intentionally public, a lit book is part of what proves the
+settlement claim. Once there's real depth behind it, the next piece is confidential
+order sizing on the same CLOB, so a trader's position isn't visible before it fills.
+That's roadmap, not shipped, and we're not going to pretend otherwise.
+
+## Contributing
+
+This started as a hackathon build, but the settlement path is real and we'd like it
+to hold up under more eyes. Issues and PRs are welcome, especially anything that
+pokes at the TxLINE proof handling or the conditional-vault math. If you're picking
+this up cold, `docs/TXLINE-SUBMISSION.md` is the fastest way into how the pieces fit.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
