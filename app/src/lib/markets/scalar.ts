@@ -96,12 +96,16 @@ export interface ScalarMarket {
 export async function fetchScalarMarkets(): Promise<ScalarMarket[]> {
   const supa = getSupabase();
   if (!supa) return [];
-  const { data } = await supa
-    .from('scalar_markets')
-    .select('*')
-    .eq('status', 'open')
-    .order('resolve_time', { ascending: true });
-  return (data as ScalarMarket[]) ?? [];
+  // Open markets never expire off this list. Settled ones used to vanish the instant they
+  // resolved (this query was open-only), so a market's own "Settled by TxLINE proof" receipt
+  // had nowhere to surface once it actually settled. Keep recently-settled ones around for a
+  // week so a finished match stays visible with its receipt instead of disappearing.
+  const recentCutoff = new Date(Date.now() - 7 * 86400000).toISOString();
+  const [{ data: open }, { data: settled }] = await Promise.all([
+    supa.from('scalar_markets').select('*').eq('status', 'open').order('resolve_time', { ascending: true }),
+    supa.from('scalar_markets').select('*').eq('status', 'settled').gte('resolved_at', recentCutoff).order('resolved_at', { ascending: false }),
+  ]);
+  return [...((open as ScalarMarket[]) ?? []), ...((settled as ScalarMarket[]) ?? [])];
 }
 
 /** Proximity score if the market resolved at `assumedActual`, drives the live hint. */
