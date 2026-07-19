@@ -90,7 +90,3 @@ The new build is small: the pre-close commitment record, the eligibility rule (`
 2. **On-chain commitments:** move the pre-close commitment on-chain (finalized-time anchored) so the "before close" claim is trustless, not server-attested.
 3. **Act on the edge:** the Elder takes fractional-Kelly positions on the CLOB only in the market classes where phase 1 showed positive, calibrated CLV.
 4. **Publish the record:** a public, reproducible CLV + calibration page per `elder_version`, wins and losses.
-
-***REMOVED***
-
-
